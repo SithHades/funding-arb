@@ -7,9 +7,13 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "asyncio>=4.0.0",
+    "dotenv>=0.9.9",
     "httpx>=0.28.1",
+    "hyperliquid-python-sdk>=0.20.0",
+    "lighter-sdk",
     "pandas>=2.3.3",
     "pydantic>=2.12.3",
+    "pydantic-settings>=2.11.0",
     "redis>=6.4.0",
     "rich>=14.2.0",
     "sqlalchemy>=2.0.44",
@@ -20,3 +24,6 @@ dependencies = [
 dev = [
     "pytest>=8.4.2",
 ]
+
+[tool.uv.sources]
+lighter-sdk = { git = "https://github.com/elliottech/lighter-python.git" }
