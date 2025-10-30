@@ -1,10 +1,11 @@
 import asyncio
 from decimal import ROUND_DOWN, Decimal
+import logging
 import time
 import lighter
 from src.dex_adapters.base import DexAdapter
 from src.dex_adapters.config import lighter_config as config
-from src.dex_adapters.utils import to_base_amount_int
+from src.dex_adapters.utils import calculate_current_price_from_position, to_base_amount_int
 from src.models import Side
 
 
@@ -28,10 +29,30 @@ class LighterAdapter(DexAdapter):
         self.orderbook_api = lighter.OrderApi(self.api_client)
         self._token_market_id: dict[str, int] | None = None
         self._token_market_lock: asyncio.Lock = asyncio.Lock()
+        self._market_id_base_decimals: dict[int, int] | None = None
+        self._market_id_base_decimals_lock: asyncio.Lock = asyncio.Lock()
 
     async def close(self):
         await self.api_client.close()
         await self.signer_client.close()
+    
+    async def get_decimals_for_market(self, market_index: int) -> int:
+        if self._market_id_base_decimals is None:
+            async with self._market_id_base_decimals_lock:
+                if self._market_id_base_decimals is None:
+                    self._market_id_base_decimals = {}
+        if market_index in self._market_id_base_decimals:
+            return self._market_id_base_decimals[market_index]
+        response = await self.orderbook_api.order_book_details(market_id=market_index)
+        if response.code != 200 or len(response.order_book_details) == 0:
+            raise Exception(
+                f"Could not fetch order book for market ID {market_index}, code {response.code}"
+            )
+        orderbook: lighter.OrderBookDetail = response.order_book_details[0]
+        self._market_id_base_decimals[market_index] = getattr(
+            orderbook, "supported_size_decimals", getattr(orderbook, "size_decimals", 0)
+        )
+        return self._market_id_base_decimals[market_index]
 
     async def generate_market_id_map(self) -> dict[str, int]:
         market_id_map = {}
@@ -63,11 +84,11 @@ class LighterAdapter(DexAdapter):
         balance = response.accounts[0].available_balance
         return round(float(balance), 6)
 
-    async def list_positions(self, token: str | None) -> list[dict]:
+    async def list_positions(self, token: str | None = None) -> list[dict]:
         response: lighter.DetailedAccounts = await self.account_api.account(
             by="l1_address", value=config.address
         )
-        positions = []
+        positions: list[dict] = []
         for position in response.accounts[0].positions:
             if isinstance(position, lighter.AccountPosition):
                 if float(position.position) > 0:
@@ -166,7 +187,7 @@ class LighterAdapter(DexAdapter):
         )
         return (
             base_amount_int,
-            float(avg_execution_price),
+            int(avg_execution_price * 100),
             last_price,
             base_amount_tokens,
         )
@@ -204,7 +225,7 @@ class LighterAdapter(DexAdapter):
             avg_execution_price,
             last_price,
             base_amount_tokens,
-        ) = await self.calculate_amount_and_avg_execution_price(is_ask, size)
+        ) = await self.calculate_amount_and_avg_execution_price(is_ask, size, market_index)
 
         order, hash, err = await self.signer_client.create_market_order(
             market_index=int(market_index),
@@ -226,5 +247,42 @@ class LighterAdapter(DexAdapter):
             "entry_price": fill_price,
         }
 
-    async def close_position(self, token: str) -> bool:
-        pass
+    async def close_position(self, token: str, slippage=0.01) -> dict:
+        positions = await self.list_positions(token)
+        if not positions:
+            return {"success": False, "message": "No position to close"}
+        orders, hashes, errors = [], [], []
+        for position in positions:
+            market_index = position.get("market_id")
+            position_sign = int(position.get("sign"))
+            position_size = float(position.get("position"))
+            size_decimals = await self.get_decimals_for_market(market_index)
+            base_amount_int = to_base_amount_int(base_amount_tokens=position_size, size_decimals=size_decimals)
+            avg_entry_price = float(position.get("avg_entry_price"))
+            current_asset_price = calculate_current_price_from_position(
+                position_sign,position_size,avg_entry_price,float(position.get("position_value")),float(position.get("unrealized_pnl"))
+            )
+            
+            if position_sign == 1:  # closing is long
+                avg_execution_price = current_asset_price * (1 - slippage)
+            else:
+                avg_execution_price = current_asset_price * (1 + slippage)
+
+            print(f"Closing position on {token}: market_index={market_index}, is_ask={position_sign==1}, base_amount={base_amount_int}, avg_execution_price={avg_execution_price}")
+
+            order, hash, err = await self.signer_client.create_market_order(
+                market_index=int(market_index),
+                client_order_index=self.get_client_order_index(),
+                base_amount=base_amount_int,
+                avg_execution_price=int(avg_execution_price * 100),
+                is_ask=position_sign == 1,
+                reduce_only=True,
+            )
+            orders.append(order.to_json() if order else None)
+            hashes.append(hash)
+            errors.append(err)
+        if any(errors):
+            logging.error(f"Errors closing positions: {errors}")
+            logging.error(f"Orders: {orders}")
+        return {"orders": orders, "hashes": hashes}
+        
