@@ -5,7 +5,10 @@ import time
 import lighter
 from src.dex_adapters.base import DexAdapter
 from src.dex_adapters.config import lighter_config as config
-from src.dex_adapters.utils import calculate_current_price_from_position, to_base_amount_int
+from src.dex_adapters.utils import (
+    calculate_current_price_from_position,
+    to_base_amount_int,
+)
 from src.models import Side
 
 
@@ -31,11 +34,32 @@ class LighterAdapter(DexAdapter):
         self._token_market_lock: asyncio.Lock = asyncio.Lock()
         self._market_id_base_decimals: dict[int, int] | None = None
         self._market_id_base_decimals_lock: asyncio.Lock = asyncio.Lock()
+        self._auth = None
+        self._auth_time = 0
 
     async def close(self):
         await self.api_client.close()
         await self.signer_client.close()
-    
+
+    async def get_auth(self) -> str:
+        if self._auth is None:
+            auth, err = self.signer_client.create_auth_token_with_expiry(
+                lighter.SignerClient.DEFAULT_10_MIN_AUTH_EXPIRY
+            )
+            if err is not None:
+                raise Exception(f"Error creating auth token: {err}")
+            self._auth = auth
+            self._auth_time = time.time()
+        elif time.time() - self._auth_time > 540:  # refresh every 9 minutes
+            auth, err = self.signer_client.create_auth_token_with_expiry(
+                lighter.SignerClient.DEFAULT_10_MIN_AUTH_EXPIRY
+            )
+            if err is not None:
+                raise Exception(f"Error refreshing auth token: {err}")
+            self._auth = auth
+            self._auth_time = time.time()
+        return self._auth
+
     async def get_decimals_for_market(self, market_index: int) -> int:
         if self._market_id_base_decimals is None:
             async with self._market_id_base_decimals_lock:
@@ -217,21 +241,57 @@ class LighterAdapter(DexAdapter):
             )
 
         market_index = await self.get_market_index(token)
+        size_decimals = await self.get_decimals_for_market(market_index)
         client_order_index = self.get_client_order_index()
         is_ask = True if side == Side.SHORT else False
 
-        (
-            base_amount_int,
-            avg_execution_price,
-            last_price,
-            base_amount_tokens,
-        ) = await self.calculate_amount_and_avg_execution_price(is_ask, size, market_index)
+        # Get orderbook details for price and min_base_amount
+        response = await self.orderbook_api.order_book_details(market_id=market_index)
+        if response.code != 200 or len(response.order_book_details) == 0:
+            raise Exception(
+                f"Could not fetch order book for market ID {market_index}, code {response.code}"
+            )
+        orderbook = response.order_book_details[0]
+        last_trade_price = float(orderbook.last_trade_price)  # is in USD
+        if last_trade_price <= 0:
+            raise Exception("Invalid last trade price")
+
+        # Convert USD size to base token amount
+        size_usd_dec = Decimal(str(size))
+        asset_price = Decimal(str(last_trade_price))
+        base_amount_tokens = size_usd_dec / asset_price
+
+        min_base_amount = (
+            Decimal(str(orderbook.min_base_amount))
+            if orderbook.min_base_amount
+            else Decimal("0")
+        )
+        if base_amount_tokens < min_base_amount:
+            raise Exception(
+                f"Requested base amount {base_amount_tokens} < market min_base_amount {min_base_amount}"
+            )
+
+        base_amount_int = to_base_amount_int(base_amount_tokens, size_decimals)
+        if base_amount_tokens < float(min_base_amount):
+            raise Exception(
+                "Converted base_amount is below market minimum after scaling."
+            )
+
+        # Calculate avg_execution_price with slippage
+        if is_ask:
+            avg_execution_price = last_trade_price * (1 - slippage)
+        else:
+            avg_execution_price = last_trade_price * (1 + slippage)
+
+        print(
+            f"Opening position on {token}: market_index={market_index}, is_ask={is_ask}, base_amount={base_amount_int}, avg_execution_price={avg_execution_price}"
+        )
 
         order, hash, err = await self.signer_client.create_market_order(
             market_index=int(market_index),
-            client_order_index=client_order_index,  # This needs to be a user-unique int value.
+            client_order_index=client_order_index,
             base_amount=base_amount_int,
-            avg_execution_price=avg_execution_price,  # has to be within 5% of last_trade_price we want this to be a market order.
+            avg_execution_price=int(avg_execution_price * 100),
             is_ask=is_ask,
             reduce_only=False,
         )
@@ -240,12 +300,26 @@ class LighterAdapter(DexAdapter):
         try:
             fill_price = order.price
         except AttributeError:
-            fill_price = last_price
+            fill_price = last_trade_price
         return {
             "order_id": client_order_index,
             "filled_size": float(base_amount_tokens * fill_price),
             "entry_price": fill_price,
         }
+
+    async def get_orders(
+        self, token: str | None = None, market_id: int | None = None
+    ) -> dict:
+        if market_id is None:
+            market_id = await self.get_market_index(token)
+        if market_id is None and token is None:
+            raise Exception("Either token or market_id must be provided to get orders.")
+        response = await self.orderbook_api.account_active_orders(
+            account_index=config.account_index,
+            market_id=market_id,
+            auth=await self.get_auth(),
+        )
+        return response.orders
 
     async def close_position(self, token: str, slippage=0.01) -> dict:
         positions = await self.list_positions(token)
@@ -257,18 +331,26 @@ class LighterAdapter(DexAdapter):
             position_sign = int(position.get("sign"))
             position_size = float(position.get("position"))
             size_decimals = await self.get_decimals_for_market(market_index)
-            base_amount_int = to_base_amount_int(base_amount_tokens=position_size, size_decimals=size_decimals)
+            base_amount_int = to_base_amount_int(
+                base_amount_tokens=position_size, size_decimals=size_decimals
+            )
             avg_entry_price = float(position.get("avg_entry_price"))
             current_asset_price = calculate_current_price_from_position(
-                position_sign,position_size,avg_entry_price,float(position.get("position_value")),float(position.get("unrealized_pnl"))
+                position_sign,
+                position_size,
+                avg_entry_price,
+                float(position.get("position_value")),
+                float(position.get("unrealized_pnl")),
             )
-            
+
             if position_sign == 1:  # closing is long
                 avg_execution_price = current_asset_price * (1 - slippage)
             else:
                 avg_execution_price = current_asset_price * (1 + slippage)
 
-            print(f"Closing position on {token}: market_index={market_index}, is_ask={position_sign==1}, base_amount={base_amount_int}, avg_execution_price={avg_execution_price}")
+            print(
+                f"Closing position on {token}: market_index={market_index}, is_ask={position_sign == 1}, base_amount={base_amount_int}, avg_execution_price={avg_execution_price}"
+            )
 
             order, hash, err = await self.signer_client.create_market_order(
                 market_index=int(market_index),
@@ -285,4 +367,3 @@ class LighterAdapter(DexAdapter):
             logging.error(f"Errors closing positions: {errors}")
             logging.error(f"Orders: {orders}")
         return {"orders": orders, "hashes": hashes}
-        

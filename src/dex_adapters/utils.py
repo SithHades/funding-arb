@@ -14,7 +14,10 @@ def to_base_amount_int(base_amount_tokens, size_decimals):
     scaled = (dec * scale).quantize(Decimal("1"), rounding=ROUND_DOWN)
     return int(scaled)
 
-def calculate_current_price_from_position(sign, position, avg_entry_price, position_value, unrealized_pnl):
+
+def calculate_current_price_from_position(
+    sign, position, avg_entry_price, position_value, unrealized_pnl
+):
     """
     Calculate the current price of an underlying asset based on position details.
 
