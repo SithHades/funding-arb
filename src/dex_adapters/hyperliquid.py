@@ -17,7 +17,7 @@ class HyperliquidAdapter(DexAdapter):
         self.info = Info(base_url, config.skip_ws)
         self.exchange = Exchange(account, base_url, account_address=self.address)
 
-    def get_balance(self):
+    async def get_balance(self):
         user_state = self.info.user_state(self.address)
         margin_summary = user_state.get("marginSummary", {})
         balance = float(margin_summary.get("accountValue")) - float(
@@ -25,7 +25,7 @@ class HyperliquidAdapter(DexAdapter):
         )
         return round(balance, 4)
 
-    def list_positions(self, token: str | None = None):
+    async def list_positions(self, token: str | None = None):
         positions = self.info.user_state(self.address).get("assetPositions", [])
         if token:
             positions = [
@@ -33,7 +33,7 @@ class HyperliquidAdapter(DexAdapter):
             ]
         return positions
 
-    def set_leverage(self, token: str, leverage: int, is_cross: bool = False):
+    async def set_leverage(self, token: str, leverage: int, is_cross: bool = False):
         response = self.exchange.update_leverage(leverage, token, is_cross)
         if response.get("status") == "ok":
             return True
@@ -44,7 +44,7 @@ class HyperliquidAdapter(DexAdapter):
         else:
             return False
 
-    def usd_to_token_amount(self, token: str, usd_amount: float) -> float:
+    async def usd_to_token_amount(self, token: str, usd_amount: float) -> float:
         market_data: dict = self.info.all_mids()
         price = market_data.get(token)
         if price is None:
@@ -54,7 +54,7 @@ class HyperliquidAdapter(DexAdapter):
         token_amount = float(usd_amount) / float(price)
         return round(token_amount, 4)
 
-    def open_position(
+    async def open_position(
         self,
         token: str,
         side: Side,
@@ -75,7 +75,7 @@ class HyperliquidAdapter(DexAdapter):
 
         # First, set the leverage
 
-        leverage_set = self.exchange.update_leverage(leverage, token, False)
+        leverage_set = await self.exchange.update_leverage(leverage, token, False)
         if not leverage_set and not create_order_without_leverage_set:
             raise Exception(
                 f"Could not set leverage to {leverage}x for {token} on Hyperliquid"
@@ -87,7 +87,7 @@ class HyperliquidAdapter(DexAdapter):
         is_buy = True if side == Side.LONG else False
 
         # Convert size from USD to token amount
-        size_in_token = self.usd_to_token_amount(token, size)
+        size_in_token = await self.usd_to_token_amount(token, size)
 
         order_result = self.exchange.market_open(
             token, is_buy, size_in_token, None, slippage
@@ -108,7 +108,7 @@ class HyperliquidAdapter(DexAdapter):
             raise Exception(f"Failed to open position on Hyperliquid: {order_result}")
         raise Exception("Failed to open position on Hyperliquid for unknown reasons.")
 
-    def close_position(self, token: str):
+    async def close_position(self, token: str):
         order_result = self.exchange.market_close(token)
         if order_result["status"] == "ok":
             for status in order_result["response"]["data"]["statuses"]:
