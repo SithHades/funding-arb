@@ -96,7 +96,7 @@ class HyperliquidAdapter(DexAdapter):
         if order_result["status"] == "ok":
             for status in order_result["response"]["data"]["statuses"]:
                 try:
-                    filled = status["filled"]
+                    filled: dict = status["filled"]
                     return {
                         "order_id": filled["oid"],
                         "filled_size": filled["totalSz"],

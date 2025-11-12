@@ -75,5 +75,12 @@ def redis_lock(key: str, ttl=10):
     finally:
         # release only if token matches
         val = redis_client.get(lock_key)
-        if val and val.decode() == token:
+        # val may be bytes, str, or something else (type stubs can vary), so handle bytes and str explicitly
+        if isinstance(val, (bytes, bytearray)):
+            val_decoded = val.decode()
+        elif isinstance(val, str):
+            val_decoded = val
+        else:
+            val_decoded = None
+        if val_decoded == token:
             redis_client.delete(lock_key)

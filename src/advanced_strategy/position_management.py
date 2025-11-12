@@ -5,7 +5,6 @@ from typing import Optional
 from src.db_setup import ArbRun, Position, Session, redis_lock
 from src.dex_adapters.base import DexAdapter
 from src.models import Side
-import inspect
 
 
 def decimalize(v):
@@ -13,21 +12,15 @@ def decimalize(v):
 
 
 async def compute_trade_size(
-    long_adapter: DexAdapter, short_adapter: DexAdapter, coin: str, config_fraction=0.5
+    long_adapter: DexAdapter, short_adapter: DexAdapter, config_fraction=0.5
 ):
     """
     Determine size to open based on smaller available balance.
     config_fraction (0..1) of available balance to use.
     Supports both sync and async adapters.
     """
-    if inspect.iscoroutinefunction(long_adapter.get_balance):
-        bal_long = decimalize(await long_adapter.get_balance(coin))
-    else:
-        bal_long = decimalize(long_adapter.get_balance(coin))
-    if inspect.iscoroutinefunction(short_adapter.get_balance):
-        bal_short = decimalize(await short_adapter.get_balance(coin))
-    else:
-        bal_short = decimalize(short_adapter.get_balance(coin))
+    bal_long = decimalize(await long_adapter.get_balance())
+    bal_short = decimalize(await short_adapter.get_balance())
     usable = min(bal_long, bal_short) * decimalize(config_fraction)
     return usable
 
@@ -48,16 +41,18 @@ async def open_positions(
         leverage = int(leverage)
         try:
             size = await compute_trade_size(
-                long_adapter, short_adapter, coin, config_fraction=fraction
+                long_adapter, short_adapter, config_fraction=fraction
             )
             if size <= 0:
                 raise RuntimeError("Computed size is zero")
             size = float(size)
             # Open long
-            long_res = await long_adapter.open_position(coin, Side.LONG, size, leverage)
+            long_res = await long_adapter.open_position(
+                coin, Side.LONG, size, leverage, 0.01
+            )
             # Open short
             short_res = await short_adapter.open_position(
-                coin, Side.SHORT, size, leverage
+                coin, Side.SHORT, size, leverage, 0.01
             )
 
             # Persist positions
@@ -154,8 +149,8 @@ async def close_positions(
             short_pos.updated_at = datetime.now(timezone.utc)
             session.add(short_pos)
 
-            run.close_at = datetime.now(timezone.utc)
-            run.status = "CLOSED"
+            run.close_at = datetime.now(timezone.utc)  # type: ignore
+            run.status = "CLOSED"  # type: ignore
             session.add(run)
             session.commit()
             return {

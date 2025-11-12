@@ -17,19 +17,19 @@ class LighterAdapter(DexAdapter):
 
     def __init__(self):
         super().__init__()
-        self.api_client = lighter.ApiClient(
-            configuration=lighter.Configuration(host=config.base_url)
+        self.api_client = lighter.ApiClient(  # type: ignore
+            configuration=lighter.Configuration(host=config.base_url)  # type: ignore
         )
-        self.account_api = lighter.AccountApi(self.api_client)
-        self.signer_client = lighter.SignerClient(
+        self.account_api = lighter.AccountApi(self.api_client)  # type: ignore
+        self.signer_client = lighter.SignerClient(  # type: ignore
             url=config.base_url,
             private_key=config.private_key,
             account_index=config.account_index,
             api_key_index=config.key_index,
         )
-        self.funding_api = lighter.FundingApi(self.api_client)
-        self.candlestick_api = lighter.CandlestickApi(self.api_client)
-        self.orderbook_api = lighter.OrderApi(self.api_client)
+        self.funding_api = lighter.FundingApi(self.api_client)  # type: ignore
+        self.candlestick_api = lighter.CandlestickApi(self.api_client)  # type: ignore
+        self.orderbook_api = lighter.OrderApi(self.api_client)  # type: ignore
         self._token_market_id: dict[str, int] | None = None
         self._token_market_lock: asyncio.Lock = asyncio.Lock()
         self._market_id_base_decimals: dict[int, int] | None = None
@@ -44,7 +44,7 @@ class LighterAdapter(DexAdapter):
     async def get_auth(self) -> str:
         if self._auth is None:
             auth, err = self.signer_client.create_auth_token_with_expiry(
-                lighter.SignerClient.DEFAULT_10_MIN_AUTH_EXPIRY
+                lighter.SignerClient.DEFAULT_10_MIN_AUTH_EXPIRY  # type: ignore
             )
             if err is not None:
                 raise Exception(f"Error creating auth token: {err}")
@@ -52,13 +52,13 @@ class LighterAdapter(DexAdapter):
             self._auth_time = time.time()
         elif time.time() - self._auth_time > 540:  # refresh every 9 minutes
             auth, err = self.signer_client.create_auth_token_with_expiry(
-                lighter.SignerClient.DEFAULT_10_MIN_AUTH_EXPIRY
+                lighter.SignerClient.DEFAULT_10_MIN_AUTH_EXPIRY  # type: ignore
             )
             if err is not None:
                 raise Exception(f"Error refreshing auth token: {err}")
             self._auth = auth
             self._auth_time = time.time()
-        return self._auth
+        return self._auth  # type: ignore
 
     async def get_decimals_for_market(self, market_index: int) -> int:
         if self._market_id_base_decimals is None:
@@ -72,7 +72,7 @@ class LighterAdapter(DexAdapter):
             raise Exception(
                 f"Could not fetch order book for market ID {market_index}, code {response.code}"
             )
-        orderbook: lighter.OrderBookDetail = response.order_book_details[0]
+        orderbook: lighter.OrderBookDetail = response.order_book_details[0]  # type: ignore
         self._market_id_base_decimals[market_index] = getattr(
             orderbook, "supported_size_decimals", getattr(orderbook, "size_decimals", 0)
         )
@@ -102,19 +102,19 @@ class LighterAdapter(DexAdapter):
         return mapping.get(token)
 
     async def get_balance(self) -> float:
-        response: lighter.DetailedAccounts = await self.account_api.account(
+        response: lighter.DetailedAccounts = await self.account_api.account(  # type: ignore
             by="l1_address", value=config.address
         )
-        balance = response.accounts[0].available_balance
+        balance = response.accounts[0].available_balance or 0.0
         return round(float(balance), 6)
 
     async def list_positions(self, token: str | None = None) -> list[dict]:
-        response: lighter.DetailedAccounts = await self.account_api.account(
+        response: lighter.DetailedAccounts = await self.account_api.account(  # type: ignore
             by="l1_address", value=config.address
         )
         positions: list[dict] = []
         for position in response.accounts[0].positions:
-            if isinstance(position, lighter.AccountPosition):
+            if isinstance(position, lighter.AccountPosition):  # type: ignore
                 if float(position.position) > 0:
                     positions.append(position.model_dump())
         if token:
@@ -147,7 +147,7 @@ class LighterAdapter(DexAdapter):
 
     async def calculate_amount_and_avg_execution_price(
         self, is_ask: bool, size: float, market_index: int
-    ) -> tuple[int, float]:
+    ) -> tuple[int, int, Decimal, Decimal]:
         response = await self.orderbook_api.order_book_details(market_id=market_index)
         if response.code != 200:
             raise Exception(
@@ -156,7 +156,7 @@ class LighterAdapter(DexAdapter):
         if len(response.order_book_details) == 0:
             raise Exception(f"Could not fetch order book for market ID {market_index}")
 
-        orderbook: lighter.OrderBookDetail = response.order_book_details[0]
+        orderbook = response.order_book_details[0]
         asset_price = (
             Decimal(str(orderbook.last_trade_price))
             if orderbook.last_trade_price
@@ -224,7 +224,7 @@ class LighterAdapter(DexAdapter):
         leverage: int,
         slippage: float = 0.01,
         create_order_without_leverage_set: bool = False,
-    ) -> dict:
+    ) -> dict[str, int | float]:
         """
         Opens a market position.
         :param token: The trading pair/token to open the position on.
@@ -301,21 +301,25 @@ class LighterAdapter(DexAdapter):
             fill_price = order.price
         except AttributeError:
             fill_price = last_trade_price
+        if not isinstance(fill_price, (int, float, Decimal)):
+            fill_price = last_trade_price
         return {
             "order_id": client_order_index,
-            "filled_size": float(base_amount_tokens * fill_price),
-            "entry_price": fill_price,
+            "filled_size": float(base_amount_tokens) * float(fill_price),
+            "entry_price": float(fill_price),
         }
 
     async def get_orders(
         self, token: str | None = None, market_id: int | None = None
-    ) -> dict:
-        if market_id is None:
-            market_id = await self.get_market_index(token)
+    ) -> list:
         if market_id is None and token is None:
             raise Exception("Either token or market_id must be provided to get orders.")
+        if market_id is None and token is not None:
+            market_id = await self.get_market_index(token)
+        if market_id is None:
+            raise Exception("Could not determine market_id for provided token.")
         response = await self.orderbook_api.account_active_orders(
-            account_index=config.account_index,
+            account_index=config.account_index or 0,
             market_id=market_id,
             auth=await self.get_auth(),
         )
@@ -327,20 +331,20 @@ class LighterAdapter(DexAdapter):
             return {"success": False, "message": "No position to close"}
         orders, hashes, errors = [], [], []
         for position in positions:
-            market_index = position.get("market_id")
-            position_sign = int(position.get("sign"))
-            position_size = float(position.get("position"))
+            market_index = position.get("market_id", -1)
+            position_sign = int(position.get("sign", 0.0))
+            position_size = float(position.get("position", 0.0))
             size_decimals = await self.get_decimals_for_market(market_index)
             base_amount_int = to_base_amount_int(
                 base_amount_tokens=position_size, size_decimals=size_decimals
             )
-            avg_entry_price = float(position.get("avg_entry_price"))
+            avg_entry_price = float(position.get("avg_entry_price", 0.0))
             current_asset_price = calculate_current_price_from_position(
                 position_sign,
                 position_size,
                 avg_entry_price,
-                float(position.get("position_value")),
-                float(position.get("unrealized_pnl")),
+                float(position.get("position_value", 0.0)),
+                float(position.get("unrealized_pnl", 0.0)),
             )
 
             if position_sign == 1:  # closing is long
