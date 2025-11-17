@@ -90,6 +90,7 @@ async def main():
                 lighter_funding_rates, hyperliquid_funding_rates, 5.0
             )
             best_arb_coin, best_arb = get_best_arbitrage_coin(arbitrages)
+            # TODO check if old positions really have been closed before entering new arb (it already happened, that a lighter position was cancelled to close because of excessive slippage.)
             if not arbitrages:
                 if current_arb_coin:
                     _logger.info(

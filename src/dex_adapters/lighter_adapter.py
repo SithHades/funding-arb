@@ -359,11 +359,11 @@ class LighterAdapter(DexAdapter):
                 f"[{token}]: Closing position on {token}: market_index={market_index}, is_ask={position_sign == 1}, base_amount={base_amount_int}, avg_execution_price={avg_execution_price}"
             )
 
-            order, hash, err = await self.signer_client.create_market_order(
+            order, hash, err = await self.signer_client.create_market_order_if_slippage(
                 market_index=int(market_index),
                 client_order_index=self.get_client_order_index(),
                 base_amount=base_amount_int,
-                avg_execution_price=int(avg_execution_price * 100),
+                max_slippage=slippage,
                 is_ask=position_sign == 1,
                 reduce_only=True,
             )
