@@ -12,7 +12,7 @@ from src.dex_adapters.utils import (
 from src.models import Side
 
 
-_logger = logging.getLogger(__name__)
+_logger = logging.getLogger("LTAdapter")
 
 
 class LighterAdapter(DexAdapter):
@@ -287,7 +287,7 @@ class LighterAdapter(DexAdapter):
             avg_execution_price = last_trade_price * (1 + slippage)
 
         _logger.info(
-            f"Opening position on {token}: market_index={market_index}, is_ask={is_ask}, base_amount_int={base_amount_int}, avg_execution_price={avg_execution_price}"
+            f"[{token}]: Opening position on {token}: market_index={market_index}, is_ask={is_ask}, base_amount_int={base_amount_int}, avg_execution_price={avg_execution_price}"
         )
 
         order, hash, err = await self.signer_client.create_market_order_if_slippage(
@@ -356,7 +356,7 @@ class LighterAdapter(DexAdapter):
                 avg_execution_price = current_asset_price * (1 + slippage)
 
             _logger.info(
-                f"Closing position on {token}: market_index={market_index}, is_ask={position_sign == 1}, base_amount={base_amount_int}, avg_execution_price={avg_execution_price}"
+                f"[{token}]: Closing position on {token}: market_index={market_index}, is_ask={position_sign == 1}, base_amount={base_amount_int}, avg_execution_price={avg_execution_price}"
             )
 
             order, hash, err = await self.signer_client.create_market_order(

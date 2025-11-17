@@ -17,7 +17,7 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 
-_logger = logging.getLogger(__name__)
+_logger = logging.getLogger("SimpleArb")
 
 
 THRESHOLD = 10  # in bps
@@ -106,29 +106,33 @@ async def main():
                         f"Arbitrage direction changed for {current_arb_coin}. Last arb diff was {entered_arb} bps, now {best_arb} bps. Exiting arb."
                     )
                     await exit_arb(current_arb_coin, lighter, hyperliquid)
+                    current_arb_coin = ""
             if not current_arb_coin:
                 lighter_long = (
                     arbitrages[best_arb_coin]["buy_on_a_sell_on_b"] and lighter_first
                 )
-                await enter_arb(best_arb_coin, lighter_long, lighter, hyperliquid)
                 _logger.info(
                     f"Entering arbitrage on {best_arb_coin} with arb diff {best_arb} bps."
                 )
+                await enter_arb(best_arb_coin, lighter_long, lighter, hyperliquid)
                 current_arb_coin = best_arb_coin
-                entered_arb = arbitrages[best_arb_coin]["arb_diff_bps"]
+                entered_arb = abs(arbitrages[best_arb_coin]["arb_diff_bps"])
             else:
                 if current_arb_coin not in arbitrages.keys():
                     _logger.info(
                         f"Current arb coin {current_arb_coin} no longer has an opportunity. Exiting arb."
                     )
                     await exit_arb(current_arb_coin, lighter, hyperliquid)
+                    _logger.info(
+                        f"Entering a better arbitrage on {best_arb_coin} with arb diff {best_arb} bps."
+                    )
                     lighter_long = (
                         arbitrages[best_arb_coin]["buy_on_a_sell_on_b"]
                         and lighter_first
                     )
                     await enter_arb(best_arb_coin, lighter_long, lighter, hyperliquid)
                     current_arb_coin = best_arb_coin
-                    entered_arb = arbitrages[best_arb_coin]["arb_diff_bps"]
+                    entered_arb = abs(arbitrages[best_arb_coin]["arb_diff_bps"])
                 else:
                     _logger.info(
                         f"Continuing arbitrage on {current_arb_coin} with arb diff {best_arb} bps."

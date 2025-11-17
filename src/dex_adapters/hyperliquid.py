@@ -8,7 +8,7 @@ from src.dex_adapters.config import hyperliquid_config as config
 from src.models import Side
 
 
-_logger = logging.getLogger(__name__)
+_logger = logging.getLogger("HLAdapter")
 
 
 class HyperliquidAdapter(DexAdapter):
@@ -56,7 +56,12 @@ class HyperliquidAdapter(DexAdapter):
                 f"Could not fetch price for token {token} to convert USD amount to token amount."
             )
         token_amount = float(usd_amount) / float(price)
-        return round(token_amount, 4)
+        asset_id = self.info.coin_to_asset.get(token, -1)
+        if asset_id == -1:
+            szDecimals = 2
+        else:
+            szDecimals = self.info.asset_to_sz_decimals.get(asset_id, 2)
+        return round(token_amount, szDecimals)
 
     async def open_position(
         self,
@@ -101,7 +106,7 @@ class HyperliquidAdapter(DexAdapter):
             for status in order_result["response"]["data"]["statuses"]:
                 try:
                     filled: dict = status["filled"]
-                    _logger.info(f"Order filled to open: {filled}")
+                    _logger.info(f"[{token}]: Order filled to open: {filled}")
                     return {
                         "order_id": filled["oid"],
                         "filled_size": filled["totalSz"],
@@ -119,7 +124,7 @@ class HyperliquidAdapter(DexAdapter):
             for status in order_result["response"]["data"]["statuses"]:
                 try:
                     filled = status["filled"]
-                    _logger.info(f"Order filled to close: {filled}")
+                    _logger.info(f"[{token}]: Order filled to close: {filled}")
                     return {
                         "order_id": filled["oid"],
                         "filled_size": filled["totalSz"],
