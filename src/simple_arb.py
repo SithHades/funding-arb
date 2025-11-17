@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 
 from src.db_utils import (
     get_arbitrage_opportunities,
@@ -21,6 +22,7 @@ _logger = logging.getLogger("SimpleArb")
 
 
 THRESHOLD = 10  # in bps
+GRACE_PERIOD = 120  # seconds to wait before closing an arb when it becomes unfavorable
 
 
 async def enter_arb(
@@ -74,6 +76,8 @@ async def main():
     hyperliquid = HyperliquidAdapter()
     current_arb_coin = ""
     entered_arb = 0.0
+    # timestamp when an unfavorable condition for current_arb_coin started
+    arb_unfavorable_since: float | None = None
     lighter_coins = set([c for c, _ in get_coins_for_dex("lighter")])
     hyperliquid_coins = set([c for c, _ in get_coins_for_dex("hyperliquid")])
     lighter_first = True
@@ -90,54 +94,100 @@ async def main():
                 lighter_funding_rates, hyperliquid_funding_rates, 5.0
             )
             best_arb_coin, best_arb = get_best_arbitrage_coin(arbitrages)
-            # TODO check if old positions really have been closed before entering new arb (it already happened, that a lighter position was cancelled to close because of excessive slippage.)
+
+            # Determine if the current arbitrage has become unfavorable.
+            now = time.time()
+            unfavorable_reason = None
             if not arbitrages:
+                # no arbitrage opportunities at all
                 if current_arb_coin:
+                    unfavorable_reason = "no_arbitrages"
+            elif current_arb_coin:
+                # check direction change (only if entered_arb was set previously)
+                if best_arb_coin == current_arb_coin:
+                    if entered_arb != 0 and best_arb != 0:
+                        try:
+                            if (entered_arb / abs(entered_arb)) * (
+                                best_arb / abs(best_arb)
+                            ) < 0:
+                                unfavorable_reason = "direction_change"
+                        except Exception:
+                            # be conservative: if something odd happens, mark unfavorable
+                            unfavorable_reason = "direction_change"
+                else:
+                    # current coin no longer present in arbitrages meaning below threshold
+                    if current_arb_coin not in arbitrages.keys():
+                        unfavorable_reason = "current_missing"
+
+            # If unfavorable, start or check grace period timer
+            if unfavorable_reason:
+                if arb_unfavorable_since is None:
+                    arb_unfavorable_since = now
                     _logger.info(
-                        f"Current arb coin {current_arb_coin} no longer has an opportunity. Exiting arb."
+                        f"Arbitrage for {current_arb_coin} became unfavorable ({unfavorable_reason}). Starting grace period of {GRACE_PERIOD}s."
                     )
-                    await exit_arb(current_arb_coin, lighter, hyperliquid)
-                    current_arb_coin = ""
-                _logger.info("No arbitrage opportunities found.")
-                await asyncio.sleep(30)
-                continue
-            if best_arb_coin == current_arb_coin and current_arb_coin:
-                if (entered_arb / abs(entered_arb)) * (best_arb / abs(best_arb)) < 0:
-                    _logger.info(
-                        f"Arbitrage direction changed for {current_arb_coin}. Last arb diff was {entered_arb} bps, now {best_arb} bps. Exiting arb."
-                    )
-                    await exit_arb(current_arb_coin, lighter, hyperliquid)
-                    current_arb_coin = ""
-            if not current_arb_coin:
-                lighter_long = (
-                    arbitrages[best_arb_coin]["buy_on_a_sell_on_b"] and lighter_first
-                )
-                _logger.info(
-                    f"Entering arbitrage on {best_arb_coin} with arb diff {best_arb} bps."
-                )
-                await enter_arb(best_arb_coin, lighter_long, lighter, hyperliquid)
-                current_arb_coin = best_arb_coin
-                entered_arb = abs(arbitrages[best_arb_coin]["arb_diff_bps"])
+                else:
+                    elapsed = now - arb_unfavorable_since
+                    if elapsed >= GRACE_PERIOD:
+                        _logger.info(
+                            f"Grace period expired ({GRACE_PERIOD}s). Exiting arb for {current_arb_coin} due to {unfavorable_reason}."
+                        )
+                        await exit_arb(current_arb_coin, lighter, hyperliquid)
+                        current_arb_coin = ""
+                        arb_unfavorable_since = None
+
+                        # TODO check if actually exited successfully
+
+                        # after exiting, if there are arbitrages, enter the best available
+                        if arbitrages:
+                            _logger.info(
+                                f"Entering a better arbitrage on {best_arb_coin} with arb diff {best_arb} bps."
+                            )
+                            lighter_long = (
+                                arbitrages[best_arb_coin]["buy_on_a_sell_on_b"]
+                                and lighter_first
+                            )
+                            await enter_arb(
+                                best_arb_coin, lighter_long, lighter, hyperliquid
+                            )
+                            current_arb_coin = best_arb_coin
+                            entered_arb = abs(arbitrages[best_arb_coin]["arb_diff_bps"])
+                        else:
+                            _logger.info("No arbitrage opportunities found after exit.")
+                    else:
+                        remaining = GRACE_PERIOD - elapsed
+                        _logger.info(
+                            f"Unfavorable condition '{unfavorable_reason}' for {current_arb_coin}. Will exit if it persists for {remaining:.0f}s more."
+                        )
+                        # wait a short while before re-evaluating
+                        await asyncio.sleep(30)
+                        continue
             else:
-                if current_arb_coin not in arbitrages.keys():
-                    _logger.info(
-                        f"Current arb coin {current_arb_coin} no longer has an opportunity. Exiting arb."
-                    )
-                    await exit_arb(current_arb_coin, lighter, hyperliquid)
-                    _logger.info(
-                        f"Entering a better arbitrage on {best_arb_coin} with arb diff {best_arb} bps."
-                    )
+                # everything looks fine again; reset the grace timer
+                arb_unfavorable_since = None
+
+            # If we don't have an active arb, try to enter the best one
+            if not current_arb_coin:
+                if arbitrages:
                     lighter_long = (
                         arbitrages[best_arb_coin]["buy_on_a_sell_on_b"]
                         and lighter_first
+                    )
+                    _logger.info(
+                        f"Entering arbitrage on {best_arb_coin} with arb diff {best_arb} bps."
                     )
                     await enter_arb(best_arb_coin, lighter_long, lighter, hyperliquid)
                     current_arb_coin = best_arb_coin
                     entered_arb = abs(arbitrages[best_arb_coin]["arb_diff_bps"])
                 else:
-                    _logger.info(
-                        f"Continuing arbitrage on {current_arb_coin} with arb diff {best_arb} bps."
-                    )
+                    _logger.info("No arbitrage opportunities found.")
+                    await asyncio.sleep(30)
+                    continue
+            else:
+                # continuing the existing arbitrage
+                _logger.info(
+                    f"Continuing arbitrage on {current_arb_coin} with arb diff {best_arb} bps."
+                )
 
             await asyncio.sleep(30)
 
