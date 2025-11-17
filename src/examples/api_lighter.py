@@ -1,5 +1,6 @@
 import asyncio
 from src.dex_adapters.lighter_adapter import LighterAdapter
+from src.models import Side
 
 
 async def positions_printer(adapter: LighterAdapter):
@@ -10,9 +11,9 @@ async def positions_printer(adapter: LighterAdapter):
 
 
 async def open_position(adapter: LighterAdapter):
-    print("Opening ETH Position for 40 USDC...")
+    print("Opening KAITO Position for 10 USDC...")
     result = await adapter.open_position(
-        "BTC", "SHORT", 40.0, leverage=1.0, slippage=-0.05
+        "KAITO", Side.LONG, 10.0, leverage=1, slippage=0.01
     )
     print(result)
 
@@ -32,10 +33,11 @@ async def close(adapter: LighterAdapter):
 async def main():
     adapter = LighterAdapter()
     try:
-        await positions_printer(adapter)
+        # await positions_printer(adapter)
+        # print(await adapter.get_decimals_for_market(33))
         await open_position(adapter)
-        await wait(20)
-        await close(adapter)
+        # await wait(20)
+        # await close(adapter)
 
     except Exception as e:
         raise e

@@ -1,3 +1,4 @@
+import logging
 import eth_account
 from eth_account.signers.local import LocalAccount
 from hyperliquid.info import Info
@@ -5,6 +6,9 @@ from hyperliquid.exchange import Exchange
 from src.dex_adapters.base import DexAdapter
 from src.dex_adapters.config import hyperliquid_config as config
 from src.models import Side
+
+
+_logger = logging.getLogger(__name__)
 
 
 class HyperliquidAdapter(DexAdapter):
@@ -75,7 +79,7 @@ class HyperliquidAdapter(DexAdapter):
 
         # First, set the leverage
 
-        leverage_set = await self.exchange.update_leverage(leverage, token, False)
+        leverage_set = await self.set_leverage(token, leverage, False)
         if not leverage_set and not create_order_without_leverage_set:
             raise Exception(
                 f"Could not set leverage to {leverage}x for {token} on Hyperliquid"
@@ -97,27 +101,29 @@ class HyperliquidAdapter(DexAdapter):
             for status in order_result["response"]["data"]["statuses"]:
                 try:
                     filled: dict = status["filled"]
+                    _logger.info(f"Order filled to open: {filled}")
                     return {
                         "order_id": filled["oid"],
                         "filled_size": filled["totalSz"],
                         "entry_price": filled["avgPx"],
                     }
                 except KeyError:
-                    print(f"Error: {status['error']}")
+                    _logger.info(f"Error: {status['error']}")
         else:
             raise Exception(f"Failed to open position on Hyperliquid: {order_result}")
         raise Exception("Failed to open position on Hyperliquid for unknown reasons.")
 
     async def close_position(self, token: str):
         order_result = self.exchange.market_close(token)
-        if order_result["status"] == "ok":
+        if order_result and order_result["status"] == "ok":
             for status in order_result["response"]["data"]["statuses"]:
                 try:
                     filled = status["filled"]
+                    _logger.info(f"Order filled to close: {filled}")
                     return {
                         "order_id": filled["oid"],
                         "filled_size": filled["totalSz"],
                         "entry_price": filled["avgPx"],
                     }
                 except KeyError:
-                    print(f"Error: {status['error']}")
+                    _logger.info(f"Error: {status['error']}")

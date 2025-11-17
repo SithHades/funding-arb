@@ -120,9 +120,8 @@ if __name__ == "__main__":
         "lighter", list(common_coins), minutes=5
     )
     arbitrages = get_arbitrage_opportunities(
-        lighter_funding_rates, hyperliquid_funding_rates, 10.0
+        lighter_funding_rates, hyperliquid_funding_rates, 5.0
     )
     print("Arbitrage opportunities between Lighter and Hyperliquid:")
-    for arb in arbitrages:
-        symbol = get_symbol_for_coin_id(arb["coin_id"])
-        print(f" - {symbol}: {arb['arb_diff_bps']} bps")
+    for coin_symbol, arb in arbitrages.items():
+        print(f" - {coin_symbol}: {arb['arb_diff_bps']} bps")
