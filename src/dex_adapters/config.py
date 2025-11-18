@@ -10,21 +10,23 @@ dotenv.load_dotenv()
 
 
 class HyperliquidConfig(BaseSettings):
-    address: str = Field(..., env="ETHEREUM_ADDRESS", alias="ETHEREUM_ADDRESS")
+    address: str = Field(..., alias="ETHEREUM_ADDRESS")
     private_key: str = Field(
         ...,
-        env="HYPERLIQUID_API_WALLET_PK",
         alias="HYPERLIQUID_API_WALLET_PK",
     )
-    skip_ws: bool = Field(False, env="HYPERLIQUID_SKIP_WS", alias="HYPERLIQUID_SKIP_WS")
+    skip_ws: bool = Field(False, alias="HYPERLIQUID_SKIP_WS")
     base_url: str = Field(
         MAINNET_API_URL,
-        env="HYPERLIQUID_API_BASE_URL",
         alias="HYPERLIQUID_API_BASE_URL",
     )
 
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore", case_sensitive=True
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=True,
+        env_prefix="",
     )
 
 
@@ -50,10 +52,11 @@ class LighterConfig(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=True,
+        env_prefix="",
     )
 
     mode: Union[Literal["test"], Literal["main"]] = Field(
-        "main", env="LIGHTER_API_MODE", alias="LIGHTER_API_MODE"
+        "main", alias="LIGHTER_API_MODE"
     )
 
     # base_url is directly replaced from lighter_map
@@ -64,7 +67,7 @@ class LighterConfig(BaseSettings):
     private_key: str | None = None
     key_index: int | None = None
 
-    address: str = Field(..., env="ETHEREUM_ADDRESS", alias="ETHEREUM_ADDRESS")
+    address: str = Field(..., alias="ETHEREUM_ADDRESS")
 
     @model_validator(mode="after")
     def load_dynamic_envs(cls, values):
@@ -93,5 +96,5 @@ class LighterConfig(BaseSettings):
         return values
 
 
-hyperliquid_config = HyperliquidConfig()
-lighter_config = LighterConfig()
+hyperliquid_config = HyperliquidConfig()  # type: ignore
+lighter_config = LighterConfig()  # type: ignore

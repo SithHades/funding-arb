@@ -33,9 +33,9 @@ async def close(adapter: LighterAdapter):
 async def main():
     adapter = LighterAdapter()
     try:
-        # await positions_printer(adapter)
+        await positions_printer(adapter)
         # print(await adapter.get_decimals_for_market(33))
-        await open_position(adapter)
+        # await open_position(adapter)
         # await wait(20)
         # await close(adapter)
 

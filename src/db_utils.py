@@ -1,9 +1,15 @@
+import os
+import dotenv
 import psycopg2
 
-from src.db_setup import DATABASE_URL
 
+dotenv.load_dotenv()
 
 COIN_ID_TO_SYMBOL_CACHE = {}
+
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL", "postgresql://user:pass@localhost:5432/arbdb"
+)
 
 
 def get_coins_for_dex(dex_name: str) -> list[tuple]:

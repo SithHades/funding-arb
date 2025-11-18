@@ -1,4 +1,5 @@
 import asyncio
+import decimal
 import logging
 import time
 
@@ -7,10 +8,10 @@ from src.db_utils import (
     get_coins_for_dex,
     get_recent_funding_rates,
 )
+from src.dex_adapters.base import DexAdapter
 from src.dex_adapters.hyperliquid import HyperliquidAdapter
 from src.dex_adapters.lighter_adapter import LighterAdapter
 from src.models import Side
-from src.advanced_strategy.position_management import compute_trade_size
 
 
 logging.basicConfig(
@@ -23,6 +24,24 @@ _logger = logging.getLogger("SimpleArb")
 
 THRESHOLD = 10  # in bps
 GRACE_PERIOD = 120  # seconds to wait before closing an arb when it becomes unfavorable
+
+
+def decimalize(v):
+    return decimal.Decimal(v)
+
+
+async def compute_trade_size(
+    long_adapter: DexAdapter, short_adapter: DexAdapter, config_fraction=0.5
+):
+    """
+    Determine size to open based on smaller available balance.
+    config_fraction (0..1) of available balance to use.
+    Supports both sync and async adapters.
+    """
+    bal_long = decimalize(await long_adapter.get_balance())
+    bal_short = decimalize(await short_adapter.get_balance())
+    usable = min(bal_long, bal_short) * decimalize(config_fraction)
+    return usable
 
 
 async def enter_arb(
