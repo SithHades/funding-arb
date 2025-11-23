@@ -1,6 +1,6 @@
 import asyncio
-from src.dex_adapters.lighter_adapter import LighterAdapter
-from src.models import Side
+from dex_adapters.lighter_adapter import LighterAdapter
+from models import Side
 
 
 async def positions_printer(adapter: LighterAdapter):

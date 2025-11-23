@@ -16,7 +16,7 @@ COPY README.md .
 
 EXPOSE 8000
 
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/app/src
 
 # Activate uv’s venv and run your main script
 CMD [".venv/bin/python", "-m", "src.simple_arb"]

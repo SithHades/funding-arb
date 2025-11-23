@@ -1,7 +1,7 @@
 from datetime import datetime
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.database.models import ArbitragePosition, PositionStatus
+from database.models import ArbitragePosition, PositionStatus
 
 
 async def get_open_positions(session: AsyncSession) -> list[ArbitragePosition]:

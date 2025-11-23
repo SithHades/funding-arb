@@ -21,8 +21,16 @@ dependencies = [
     "web3>=7.14.0",
 ]
 
+[tool.pyrefly]
+project-includes = [
+    "**/*.py*",
+    "**/*.ipynb",
+]
+
 [dependency-groups]
 dev = [
+    "pyrefly>=0.42.3",
+    "pyright>=1.1.407",
     "pytest>=8.4.2",
     "ruff>=0.14.3",
 ]

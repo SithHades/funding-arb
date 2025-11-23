@@ -1,4 +1,4 @@
-from src.models import Side
+from models import Side
 
 
 class DexAdapter:

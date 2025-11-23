@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 from sqlalchemy import String, Float, DateTime, Integer
 from sqlalchemy.orm import Mapped, mapped_column
-from src.database.base import Base
+from database.base import Base
 
 
 class PositionStatus(str, Enum):

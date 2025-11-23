@@ -3,17 +3,17 @@ import decimal
 import logging
 import time
 
-from src.db_utils import (
+from db_utils import (
     get_arbitrage_opportunities,
     get_coins_for_dex,
     get_recent_funding_rates,
 )
-from src.dex_adapters.base import DexAdapter
-from src.dex_adapters.hyperliquid import HyperliquidAdapter
-from src.dex_adapters.lighter_adapter import LighterAdapter
-from src.models import Side
-from src.database.session import init_models, AsyncSessionLocal
-from src.database import repository
+from dex_adapters.base import DexAdapter
+from dex_adapters.hyperliquid import HyperliquidAdapter
+from dex_adapters.lighter_adapter import LighterAdapter
+from models import Side
+from database.session import init_models, AsyncSessionLocal
+from database import repository
 from datetime import datetime
 
 

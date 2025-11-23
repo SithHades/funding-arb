@@ -3,13 +3,13 @@ from decimal import ROUND_DOWN, Decimal
 import logging
 import time
 import lighter
-from src.dex_adapters.base import DexAdapter
-from src.dex_adapters.config import lighter_config as config
-from src.dex_adapters.utils import (
+from dex_adapters.base import DexAdapter
+from dex_adapters.config import lighter_config as config
+from dex_adapters.utils import (
     calculate_current_price_from_position,
     to_base_amount_int,
 )
-from src.models import Side
+from models import Side
 
 
 _logger = logging.getLogger("LTAdapter")
@@ -17,6 +17,8 @@ _logger = logging.getLogger("LTAdapter")
 
 class LighterAdapter(DexAdapter):
     name = "Lighter"
+    _auth_time: float
+    _auth: str | None
 
     def __init__(self):
         super().__init__()
@@ -38,7 +40,7 @@ class LighterAdapter(DexAdapter):
         self._market_id_base_decimals: dict[int, int] | None = None
         self._market_id_base_decimals_lock: asyncio.Lock = asyncio.Lock()
         self._auth = None
-        self._auth_time = 0
+        self._auth_time = 0.0
 
     async def close(self):
         await self.api_client.close()
