@@ -1,3 +1,4 @@
+from datetime import timezone
 from datetime import datetime
 from enum import Enum
 from sqlalchemy import String, Float, DateTime, Integer
@@ -12,15 +13,20 @@ class PositionStatus(str, Enum):
 
 class ArbitragePosition(Base):
     __tablename__ = "arbitrage_positions"
+    __table_args__ = {"schema": "arb"}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     symbol: Mapped[str] = mapped_column(String, nullable=False)
     entry_arb_diff_bps: Mapped[float] = mapped_column(Float, nullable=False)
-    entry_timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    entry_timestamp: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
     status: Mapped[PositionStatus] = mapped_column(
         String, default=PositionStatus.OPEN, nullable=False
     )
-    unfavorable_since: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    unfavorable_since: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     long_dex: Mapped[str] = mapped_column(String, nullable=False)
     short_dex: Mapped[str] = mapped_column(String, nullable=False)
     size_usd: Mapped[float] = mapped_column(Float, nullable=False)

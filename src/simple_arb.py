@@ -50,8 +50,8 @@ async def compute_trade_size(
 async def enter_arb(
     coin_symbol: str,
     lighter_long: bool,
-    lighter: LighterAdapter,
-    hyperliquid: HyperliquidAdapter,
+    lighter: DexAdapter,
+    hyperliquid: DexAdapter,
 ):
     size = await compute_trade_size(lighter, hyperliquid, 0.5)
 
@@ -73,13 +73,17 @@ async def enter_arb(
         return 0.0
 
 
-async def exit_arb(
-    coin_symbol: str, lighter: LighterAdapter, hyperliquid: HyperliquidAdapter
-):
-    lighter_close = lighter.close_position(coin_symbol, slippage=0.02)
-    hyperliquid_close = hyperliquid.close_position(coin_symbol)
+async def exit_arb(coin_symbol: str, dexA: DexAdapter, dexB: DexAdapter):
+    if isinstance(dexA, LighterAdapter):
+        dexA_close = dexA.close_position(coin_symbol, slippage=0.02)
+    else:
+        dexA_close = dexA.close_position(coin_symbol)
+    if isinstance(dexB, LighterAdapter):
+        dexB_close = dexB.close_position(coin_symbol, slippage=0.02)
+    else:
+        dexB_close = dexB.close_position(coin_symbol)
     try:
-        await asyncio.gather(lighter_close, hyperliquid_close)
+        await asyncio.gather(dexA_close, dexB_close)
     except Exception as e:
         _logger.info(f"Error exiting arbitrage: {e}")
 
@@ -282,4 +286,7 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        _logger.info("Exiting...")

@@ -1,3 +1,4 @@
+from datetime import timezone
 from datetime import datetime
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,7 +34,7 @@ async def create_position(
         short_dex=short_dex,
         size_usd=size_usd,
         status=PositionStatus.OPEN,
-        entry_timestamp=datetime.utcnow(),
+        entry_timestamp=datetime.now(timezone.utc),
     )
     session.add(new_pos)
     await session.commit()
