@@ -3,9 +3,9 @@ import eth_account
 from eth_account.signers.local import LocalAccount
 from hyperliquid.info import Info
 from hyperliquid.exchange import Exchange
-from src.dex_adapters.base import DexAdapter
-from src.dex_adapters.config import hyperliquid_config as config
-from src.models import Side
+from dex_adapters.base import DexAdapter
+from dex_adapters.config import hyperliquid_config as config
+from models import Side
 
 
 _logger = logging.getLogger("HLAdapter")
@@ -132,3 +132,4 @@ class HyperliquidAdapter(DexAdapter):
                     }
                 except KeyError:
                     _logger.info(f"Error: {status['error']}")
+        return dict()

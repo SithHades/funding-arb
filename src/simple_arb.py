@@ -3,15 +3,18 @@ import decimal
 import logging
 import time
 
-from src.db_utils import (
+from db_utils import (
     get_arbitrage_opportunities,
     get_coins_for_dex,
     get_recent_funding_rates,
 )
-from src.dex_adapters.base import DexAdapter
-from src.dex_adapters.hyperliquid import HyperliquidAdapter
-from src.dex_adapters.lighter_adapter import LighterAdapter
-from src.models import Side
+from dex_adapters.base import DexAdapter
+from dex_adapters.hyperliquid import HyperliquidAdapter
+from dex_adapters.lighter_adapter import LighterAdapter
+from models import Side
+from database.session import init_models, AsyncSessionLocal
+from database import repository
+from datetime import datetime
 
 
 logging.basicConfig(
@@ -47,8 +50,8 @@ async def compute_trade_size(
 async def enter_arb(
     coin_symbol: str,
     lighter_long: bool,
-    lighter: LighterAdapter,
-    hyperliquid: HyperliquidAdapter,
+    lighter: DexAdapter,
+    hyperliquid: DexAdapter,
 ):
     size = await compute_trade_size(lighter, hyperliquid, 0.5)
 
@@ -63,18 +66,24 @@ async def enter_arb(
     try:
         _logger.info(f"Opening arb positions on {coin_symbol} with size {size}.")
         _ = await asyncio.gather(lighter_open, hyperliquid_open)
+        return size
     except Exception as e:
         _logger.info(f"Error entering arbitrage: {e}")
         await exit_arb(coin_symbol, lighter, hyperliquid)
+        return 0.0
 
 
-async def exit_arb(
-    coin_symbol: str, lighter: LighterAdapter, hyperliquid: HyperliquidAdapter
-):
-    lighter_close = lighter.close_position(coin_symbol, slippage=0.02)
-    hyperliquid_close = hyperliquid.close_position(coin_symbol)
+async def exit_arb(coin_symbol: str, dexA: DexAdapter, dexB: DexAdapter):
+    if isinstance(dexA, LighterAdapter):
+        dexA_close = dexA.close_position(coin_symbol, slippage=0.02)
+    else:
+        dexA_close = dexA.close_position(coin_symbol)
+    if isinstance(dexB, LighterAdapter):
+        dexB_close = dexB.close_position(coin_symbol, slippage=0.02)
+    else:
+        dexB_close = dexB.close_position(coin_symbol)
     try:
-        await asyncio.gather(lighter_close, hyperliquid_close)
+        await asyncio.gather(dexA_close, dexB_close)
     except Exception as e:
         _logger.info(f"Error exiting arbitrage: {e}")
 
@@ -91,12 +100,29 @@ def get_best_arbitrage_coin(arbitrages: dict) -> tuple[str, float]:
 
 
 async def main():
+    await init_models()
     lighter = LighterAdapter()
     hyperliquid = HyperliquidAdapter()
+
     current_arb_coin = ""
     entered_arb = 0.0
-    # timestamp when an unfavorable condition for current_arb_coin started
     arb_unfavorable_since: float | None = None
+    current_position_id = None
+
+    async with AsyncSessionLocal() as session:
+        positions = await repository.get_open_positions(session)
+        if positions:
+            if len(positions) > 1:
+                _logger.warning(
+                    f"Found {len(positions)} open positions, but simple_arb only supports one. Using the first one."
+                )
+            pos = positions[0]
+            current_arb_coin = pos.symbol
+            entered_arb = pos.entry_arb_diff_bps
+            current_position_id = pos.id
+            if pos.unfavorable_since:
+                arb_unfavorable_since = pos.unfavorable_since.timestamp()
+            _logger.info(f"Resumed position on {current_arb_coin} from DB.")
     lighter_coins = set([c for c, _ in get_coins_for_dex("lighter")])
     hyperliquid_coins = set([c for c, _ in get_coins_for_dex("hyperliquid")])
     lighter_first = True
@@ -142,6 +168,13 @@ async def main():
             if unfavorable_reason:
                 if arb_unfavorable_since is None:
                     arb_unfavorable_since = now
+                    if current_position_id:
+                        async with AsyncSessionLocal() as session:
+                            await repository.update_unfavorable_since(
+                                session,
+                                current_position_id,
+                                datetime.fromtimestamp(now),
+                            )
                     _logger.info(
                         f"Arbitrage for {current_arb_coin} became unfavorable ({unfavorable_reason}). Starting grace period of {GRACE_PERIOD}s."
                     )
@@ -152,6 +185,12 @@ async def main():
                             f"Grace period expired ({GRACE_PERIOD}s). Exiting arb for {current_arb_coin} due to {unfavorable_reason}."
                         )
                         await exit_arb(current_arb_coin, lighter, hyperliquid)
+                        if current_position_id:
+                            async with AsyncSessionLocal() as session:
+                                await repository.close_position(
+                                    session, current_position_id
+                                )
+                            current_position_id = None
                         current_arb_coin = ""
                         arb_unfavorable_since = None
 
@@ -166,11 +205,22 @@ async def main():
                                 arbitrages[best_arb_coin]["buy_on_a_sell_on_b"]
                                 and lighter_first
                             )
-                            await enter_arb(
+                            size = await enter_arb(
                                 best_arb_coin, lighter_long, lighter, hyperliquid
                             )
                             current_arb_coin = best_arb_coin
                             entered_arb = abs(arbitrages[best_arb_coin]["arb_diff_bps"])
+                            if size > 0:
+                                async with AsyncSessionLocal() as session:
+                                    pos = await repository.create_position(
+                                        session,
+                                        best_arb_coin,
+                                        entered_arb,
+                                        "lighter" if lighter_long else "hyperliquid",
+                                        "hyperliquid" if lighter_long else "lighter",
+                                        size,
+                                    )
+                                    current_position_id = pos.id
                         else:
                             _logger.info("No arbitrage opportunities found after exit.")
                     else:
@@ -183,7 +233,13 @@ async def main():
                         continue
             else:
                 # everything looks fine again; reset the grace timer
-                arb_unfavorable_since = None
+                if arb_unfavorable_since is not None:
+                    arb_unfavorable_since = None
+                    if current_position_id:
+                        async with AsyncSessionLocal() as session:
+                            await repository.update_unfavorable_since(
+                                session, current_position_id, None
+                            )
 
             # If we don't have an active arb, try to enter the best one
             if not current_arb_coin:
@@ -195,9 +251,22 @@ async def main():
                     _logger.info(
                         f"Entering arbitrage on {best_arb_coin} with arb diff {best_arb} bps."
                     )
-                    await enter_arb(best_arb_coin, lighter_long, lighter, hyperliquid)
+                    size = await enter_arb(
+                        best_arb_coin, lighter_long, lighter, hyperliquid
+                    )
                     current_arb_coin = best_arb_coin
                     entered_arb = abs(arbitrages[best_arb_coin]["arb_diff_bps"])
+                    if size > 0:
+                        async with AsyncSessionLocal() as session:
+                            pos = await repository.create_position(
+                                session,
+                                best_arb_coin,
+                                entered_arb,
+                                "lighter" if lighter_long else "hyperliquid",
+                                "hyperliquid" if lighter_long else "lighter",
+                                size,
+                            )
+                            current_position_id = pos.id
                 else:
                     _logger.info("No arbitrage opportunities found.")
                     await asyncio.sleep(30)
@@ -217,4 +286,7 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        _logger.info("Exiting...")
