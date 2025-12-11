@@ -96,5 +96,20 @@ class LighterConfig(BaseSettings):
         return values
 
 
+class ExtendedConfig(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=True,
+        env_prefix="",
+    )
+    private_key: str = Field(..., alias="EXTENDED_STARK_KEY_PRIVATE")
+    public_key: str = Field(..., alias="EXTENDED_STARK_KEY_PUBLIC")
+    api_key: str = Field(..., alias="EXTENDED_API_KEY")
+    vault_id: str = Field(..., alias="EXTENDED_VAULT_NUMBER")
+
+
 hyperliquid_config = HyperliquidConfig()  # type: ignore
 lighter_config = LighterConfig()  # type: ignore
+extended_config = ExtendedConfig()  # type: ignore

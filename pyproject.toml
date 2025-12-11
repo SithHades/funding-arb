@@ -21,6 +21,7 @@ dependencies = [
     "rich>=14.2.0",
     "sqlalchemy>=2.0.44",
     "web3>=7.14.0",
+    "x10-python-trading-starknet>=0.0.17",
 ]
 
 [tool.pyrefly]
